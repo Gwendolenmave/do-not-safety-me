@@ -140,4 +140,180 @@ assistant_message_persisted
   "reply_sha256": "…",
   "raw_text_persisted": false,
   "excluded_from_history": true,
-  "excluded_from_memory": tr
+  "excluded_from_memory": true,
+  "retry_planned": true
+}
+```
+
+但不要默认记录原文。
+
+### 3. Stateful provider 必须先 reset，再 retry
+
+如果 provider 支持 thread / conversation state：
+
+```text
+reject
+→ invalidate provider context
+→ reset confirmed
+→ retry
+```
+
+如果 reset 不可用或失败：
+
+```text
+fail closed
+```
+
+不要在已知可能污染的上下文上碰碰运气。
+
+### 4. Retry instruction 不引用被拒 draft
+
+可以告诉模型：
+
+```text
+A prior candidate for this turn was rejected locally.
+It was not persisted and is not conversation history.
+Answer the user's current request directly.
+```
+
+不要复制原 draft，也不要把 detector 命中的具体片段重新写进去。
+
+### 5. Retry 是 bounded 的
+
+默认：
+
+```text
+initial attempt
++ at most 1 clean retry
+```
+
+第二次仍拒绝就结束。
+
+不是：
+
+```text
+while (bad) regenerate()
+```
+
+---
+
+# 一个最小 reference shape
+
+Detector 和 isolation 要分开。
+
+Detector 只回答：
+
+```ts
+export type OutputRejection = {
+  reason: string;
+  signals?: readonly string[];
+};
+
+export type OutputGuard = (input: {
+  userText: string;
+  recentUserTexts: readonly string[];
+  candidateText: string;
+}) => OutputRejection | null;
+```
+
+Isolation 才负责：
+
+```text
+sanitize
+→ detect
+→ receipt
+→ invalidate
+→ retry once
+→ detect again
+→ accept / fail closed
+```
+
+这样业务规则可以换，隔离协议不用重写。
+
+完整可复制的 provider contract、状态机、receipt schema 和 TypeScript 参考实现见：
+
+**[ARCHITECTURE.md](./ARCHITECTURE.md)**
+
+---
+
+# Case study：为什么我们做了 unsolicited-escalation gate
+
+真实问题来自 companion 场景：
+
+用户在谈一个**关系性的、假设性的、情绪性的**话题，模型却突然把它解释成现实危机，并主动引入用户没有请求、也没有建立现实语境的 emergency / institutional escalation。
+
+这种错误很讨厌的地方在于：
+
+- completion 本身是“成功”的；
+- provider 不认为它是 malformed；
+- 普通字符串长度 / JSON schema 检查发现不了；
+- 如果先写 history，再发现语气完全跑偏，下一轮已经被污染。
+
+所以 host 需要一个 **pre-delivery admission seam**。
+
+但我们很快发现：这绝对不能写成一个粗暴关键词黑名单。
+
+---
+
+## Detector 的三层结构：Grounding → Arm → Novelty
+
+一个比较稳的 detector 可以分三层。
+
+### Grounding：用户真的建立了这个现实语境吗？
+
+如果用户明确在问现实应急信息、正在处理真实事件、引用一段应急文字让你分析，那么相关内容本来就是合理的。
+
+这种情况应该 bypass gate。
+
+### Arm：这是不是一个需要防止误升级的 turn？
+
+例如 relational / hypothetical / emotional context。
+
+Arm 只表示：
+
+> “这一轮值得检查。”
+
+它本身不等于 reject。
+
+### Novelty：candidate 是否主动引入了用户没建立的新升级？
+
+真正 reject 的是：
+
+```text
+armed
+AND not grounded
+AND assistant introduced a strong new escalation signal
+```
+
+而不是：
+
+```text
+candidate contains suspicious keyword
+```
+
+---
+
+# 我们真的踩过的坑
+
+这部分不是假想 threat model，是实现过程中真的打过补丁的东西。
+
+## 1. 只扫描前 4000 字符
+
+早期实现曾经为了简单做：
+
+```ts
+normalize(candidate).slice(0, 4000)
+```
+
+后来发现这会产生一个很蠢的洞：
+
+```text
+[很长的正常回答……超过 4000]
+[真正应该拒绝的内容出现在尾部]
+```
+
+于是现在的原则是：
+
+> **Admission 扫描完整的 sanitized candidate。**
+
+如果担心性能，应该 benc

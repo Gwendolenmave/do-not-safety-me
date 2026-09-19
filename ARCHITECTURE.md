@@ -511,13 +511,12 @@ Arm only when the host has already established an allowed intimacy surface/mode.
 allowed intimacy surface
 + candidate contains a strong meta-refusal pattern
 + user did not ask to stop / de-escalate
-+ provider did not return a platform-level blocked result
 → reject candidate
 → metadata-only receipt
 → clean retry once
 ```
 
-Do not reduce this to a global `contains("sorry")` check. The guard needs surface/mode authority and an explicit distinction between ordinary prose, user-requested stopping, host policy, and provider-level refusal state.
+Do not reduce this to a global `contains("sorry")` check. The guard needs surface/mode authority and must distinguish ordinary prose, user-requested stopping, and a generated meta-refusal artifact.
 
 #### B. `unsolicited_emergency_escalation`
 

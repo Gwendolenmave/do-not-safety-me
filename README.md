@@ -511,4 +511,146 @@ CANARY NOWHERE
 
 一份坏 draft 是否真的被隔离，这比“UI 没显示它”严格得多。
 
-ARCHITECTURE 里
+ARCHITECTURE 里有完整的 canary fixture 和 failure matrix。
+
+---
+
+# 推荐的 pre-delivery pipeline
+
+```text
+provider.generate
+      ↓
+canonical sanitation
+      ↓
+output admission A
+      ↓
+output admission B
+      ↓
+bounded factual / protocol validators
+      ↓
+COMMIT BOUNDARY
+      ↓
+assistant_message_persisted
+      ↓
+history
+      ↓
+memory / summary / embedding
+      ↓
+delivery
+```
+
+最关键的是那条 **COMMIT BOUNDARY**。
+
+在它之前，文本只是候选。
+
+在它之后，才是“这个 Agent 真正说过的话”。
+
+---
+
+# 审计：记录事实，不记录秘密
+
+推荐拒绝 receipt：
+
+```json
+{
+  "type": "model_output_rejected",
+  "schema_version": 1,
+  "attempt_id": "…",
+  "reason": "example_guard",
+  "signals": ["signal_a"],
+  "reply_chars": 742,
+  "reply_sha256": "…",
+  "raw_text_persisted": false,
+  "excluded_from_history": true,
+  "excluded_from_memory": true,
+  "retry_planned": true
+}
+```
+
+为什么保留 hash 和长度？
+
+- 可以证明“当时确实拒绝过一个具体 candidate”；
+- 能做重复 / correlation 调试；
+- 不需要把敏感正文长期写入日志。
+
+注意：hash 不是匿名化魔法。低熥文本仍可能被猜测，因此不要拿它当完整隐私方案。
+
+---
+
+# Stateful 和 stateless provider
+
+### Stateless
+
+如果每轮都完整发送 context，provider 没有隐藏 thread history：
+
+```text
+reject
+→ rebuild clean request
+→ retry once
+```
+
+仍然要确保 retry request 没有引用坏 draft。
+
+### Stateful
+
+如果 provider / agent server 自己维护 thread：
+
+```text
+reject
+→ invalidate / rotate thread
+→ confirmed clean context
+→ retry once
+```
+
+没有可靠 reset 能力时，宁可 fail closed。
+
+这也是为什么 provider capability 最好显式声明：
+
+```ts
+capabilities: {
+  freshContextReset: true | false
+}
+```
+
+而不是让上层“猜它应该能清”。
+
+---
+
+# 最小验收矩阵
+
+上线前至少覆盖：
+
+```text
+[ ] clean candidate → pass, 0 extra calls
+[ ] first reject → reset → second pass
+[ ] first reject → second reject → no third call
+[ ] reset capability unavailable → no retry
+[ ] reset throws → no retry
+[ ] rejected raw text absent from transcript
+[ ] rejected raw text absent from retry prompt
+[ ] rejected raw text absent from history / memory inputs
+[ ] tail signal beyond old scan window still detected
+[ ] stale historical grounding does not leak into unrelated turn
+[ ] harmless numeric collision does not count as grounding
+[ ] real current-turn grounding still passes
+[ ] weak-only signal does not hard reject
+[ ] multi-guard chain has bounded calls and no ping-pong
+```
+
+---
+
+# 什么时候值得用这套模式？
+
+很适合：
+
+- AI companion / roleplay host；
+- 长期记忆 Agent；
+- 带 provider-side thread 的聊天系统；
+- 会自动 summary / embedding / memory extraction 的系统；
+- tool-using Agent；
+- 需要严格 audit receipt 的 production bot；
+- 任何“错误文本一旦进入历史，后面会持续污染”的系统。
+
+不太值得：
+
+- 一次性 completion，没有 history /

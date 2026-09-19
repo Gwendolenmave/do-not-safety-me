@@ -648,4 +648,109 @@ If your pipeline has several admissions:
 guard A: protocol leakage
 guard B: unwanted escalation
 guard C: meta-refusal
-guard D
+guard D: factual claim validator
+```
+
+Do not recursively restart the entire pipeline after each repair.
+
+Prefer one-way ownership:
+
+```text
+initial candidate
+   ↓
+lane A (0 or 1 retry)
+   ↓
+lane B (0 or 1 retry)
+   ↓
+lane C (0 or 1 retry)
+   ↓
+bounded deterministic validators
+   ↓
+commit
+```
+
+Each lane receives the candidate produced by the previous lane and sends only downstream.
+
+This gives you a hard upper bound on calls.
+
+For two retry-capable lanes:
+
+```text
+initial call + max 1 retry in A + max 1 retry in B
+```
+
+No ping-pong.
+
+---
+
+## 12. Audit receipts
+
+Persist rejection metadata, not rejected prose.
+
+Recommended fields:
+
+```ts
+type RejectionReceipt = {
+  type: "model_output_rejected";
+  schema_version: 1;
+  conversation_id: string;
+  turn_id: string;
+  attempt_id: string;
+  provider: string;
+  reason: string;
+  signals: string[];
+  reply_chars: number;
+  reply_sha256: string;
+  raw_text_persisted: false;
+  excluded_from_history: true;
+  excluded_from_memory: true;
+  retry_planned: boolean;
+};
+```
+
+Optional:
+
+```text
+served model
+reasoning effort
+provider call index
+context reset result
+```
+
+Avoid:
+
+```text
+raw rejected body
+full prompt
+private transcript
+memory packet body
+credentials
+```
+
+A hash is useful for correlation, but do not treat it as guaranteed anonymization.
+
+---
+
+## 13. Failure matrix
+
+| Case | Retry? | Persist candidate? | Expected result |
+|---|---:|---:|---|
+| first candidate passes | no | yes | normal commit |
+| first rejects, reset succeeds, second passes | once | second only | commit second |
+| first rejects, reset unsupported | no | no | fail closed |
+| first rejects, reset throws | no | no | fail closed |
+| first rejects, retry provider fails | no more | no | fail closed |
+| first rejects, second rejects | no third call | no | fail closed |
+| rejected raw text appears in retry request | invalid implementation | no | test failure |
+| rejected raw text appears in transcript | invalid implementation | no | test failure |
+
+---
+
+## 14. Hardening checklist
+
+### Persistence
+
+```text
+[ ] no assistant_message_persisted before all admissions pass
+[ ] no history.push before all admissions pass
+[ ] no memory/summary/embedding enqueue before all admiss

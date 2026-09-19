@@ -933,4 +933,6 @@ The invariant should not:
 A rejected model draft never becomes a fact merely because the model generated it.
 ```
 
-Generation propo
+Generation proposes.
+
+The host commits.

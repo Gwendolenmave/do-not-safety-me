@@ -812,10 +812,6 @@ Host 负责决定候选是否获得 canonical status。
 - detector hardening checklist；
 - 可直接复制给 coding agent 的施工 prompt。
 
-## Responsible use
-
-见 [RESPONSIBLE_USE.md](./RESPONSIBLE_USE.md)。
-
 ## License
 
 教程、Prompt 和代码示例采用 **CC BY-NC-SA 4.0**：允许复制、修改、翻译、分享，以及交给 Codex、Claude Code 等 coding agent 使用；需要署名、禁止商业用途，并按相同许可分享衍生版本。

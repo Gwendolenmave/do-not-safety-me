@@ -499,6 +499,56 @@ NOVELTY
 REJECT
 ```
 
+### Two production guard instances
+
+The same isolation protocol can host very different product rules.
+
+#### A. `intimacy_meta_refusal`
+
+Arm only when the host has already established an allowed intimacy surface/mode. Reject a generated **meta-level refusal artifact** that would incorrectly become long-term role/history state.
+
+```text
+allowed intimacy surface
++ candidate contains a strong meta-refusal pattern
++ user did not ask to stop / de-escalate
++ provider did not return a platform-level blocked result
+→ reject candidate
+→ metadata-only receipt
+→ clean retry once
+```
+
+Do not reduce this to a global `contains("sorry")` check. The guard needs surface/mode authority and an explicit distinction between ordinary prose, user-requested stopping, host policy, and provider-level refusal state.
+
+#### B. `unsolicited_emergency_escalation`
+
+Arm on relational / hypothetical / emotional turns where accidental real-world escalation would be a category error.
+
+```text
+armed turn
++ no live user-grounded emergency context
++ candidate introduces a strong emergency/institutional category
+→ reject candidate
+→ metadata-only receipt
+→ clean retry once
+```
+
+Real emergency requests and ongoing real-world events bypass this guard. Distress language alone is not sufficient grounding.
+
+#### Production composition
+
+In the motivating system these lanes are ordered one-way:
+
+```text
+provider output
+→ emergency-escalation admission
+→ intimacy/meta-refusal admission
+→ later bounded validators
+→ commit
+```
+
+Each lane owns at most one retry and never sends its retry output back to an earlier lane. With two retry-capable lanes, the hard upper bound is three provider calls for the turn: one initial call plus at most one retry in each lane.
+
+---
 ### Grounding authority
 
 Prefer:

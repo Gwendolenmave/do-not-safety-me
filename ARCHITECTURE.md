@@ -753,4 +753,115 @@ A hash is useful for correlation, but do not treat it as guaranteed anonymizatio
 ```text
 [ ] no assistant_message_persisted before all admissions pass
 [ ] no history.push before all admissions pass
-[ ] no memory/summary/embedding enqueue before all admiss
+[ ] no memory/summary/embedding enqueue before all admissions pass
+```
+
+### Rejection
+
+```text
+[ ] raw rejected text not persisted
+[ ] category + chars + hash sufficient for audit
+[ ] retry_planned reflects actual reset success
+```
+
+### Provider state
+
+```text
+[ ] stateful provider exposes explicit reset capability
+[ ] reset failure blocks retry
+[ ] stateless retry reconstructs from canonical host state
+```
+
+### Retry
+
+```text
+[ ] exactly one retry per lane
+[ ] recovery block contains no rejected prose
+[ ] recovery block contains no private detector details unless needed
+[ ] second rejection has no third call
+```
+
+### Detector
+
+```text
+[ ] full sanitized candidate scanned
+[ ] grounding comes from user-authored evidence
+[ ] stale history cannot grant unlimited grounding
+[ ] keyword / number collisions tested
+[ ] weak-only signals tested
+[ ] real grounded cases tested to avoid false rejection
+```
+
+### Composition
+
+```text
+[ ] lanes flow one direction
+[ ] provider call indexes remain auditable
+[ ] later lane retries never jump back to earlier lane
+```
+
+---
+
+## 15. Where to place the seam
+
+The best place is usually:
+
+```text
+provider result
+→ canonical sanitation
+→ admission lanes
+→ commit boundary
+```
+
+Not:
+
+```text
+Telegram / UI renderer
+```
+
+because by UI time the text may already be in persistence.
+
+Not:
+
+```text
+memory extractor
+```
+
+because history may already be contaminated.
+
+Not:
+
+```text
+system prompt only
+```
+
+because prompts reduce probability; admission enforces a host-owned boundary.
+
+---
+
+## 16. Deployment order
+
+A conservative rollout:
+
+```text
+Phase 0  detector-only shadow logging, no rejection
+Phase 1  synthetic canary isolation tests
+Phase 2  rejection enabled, retry disabled
+Phase 3  fresh-context capability verified
+Phase 4  one bounded clean retry enabled
+Phase 5  multi-guard call-budget tests
+Phase 6  production canary / observability review
+```
+
+This lets you separate false-positive tuning from retry correctness.
+
+---
+
+## 17. Copyable coding-agent prompt
+
+```text
+Implement a pre-persistence LLM output admission lane in the existing chat/agent system.
+
+Goal:
+Model output is only a candidate until it passes host-side admission. A rejected
+candidate must not become transcript, history, memory, summary

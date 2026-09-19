@@ -36,28 +36,6 @@ local admission
 
 ---
 
-## 先说清楚：这个项目不是什么
-
-仓库名故意有点坏，但这里讲的**不是关闭 provider safety、不是绕过模型平台的安全策略，也不是把真实紧急情况过滤掉**。
-
-它解决的是 host application 自己拥有的一个更基础的问题：
-
-> **模型输出什么时候才算这个应用真的说过？**
-
-一个 provider 可以成功返回 HTTP 200，一段 completion 也可以语法完全正常，但你的应用仍然可能有理由拒绝把它提交为 canonical assistant message。
-
-例如：
-
-- 情感 / 假设性对话突然被模型错误升级成现实应急流程；
-- 角色扮演中突然出现模板化 meta-refusal；
-- 模型把内部协议、delimiter 或控制标记写进正文；
-- 一个工具型 Agent 声称“已经调用工具”，但 host ledger 没有对应调用；
-- 输出违反了你自己产品定义的格式、状态或事实约束。
-
-这些都属于 **application admission**，不是 provider moderation 的替代品。
-
----
-
 ## 90 秒理解：为什么“直接 reroll”还不够
 
 最朴素的做法通常是：
@@ -283,9 +261,9 @@ candidate
 → continue downstream
 ```
 
-关键不是匹配一个“抱歉”。Gate 必须知道**当前 surface / mode 是否真的已经进入对应亲密语境**，并区分普通自然语言、用户主动要求停止、provider 的真正 blocked/refusal 状态，以及已允许场景里突然冒出来的模板化 meta-refusal。
+关键不是匹配一个“抱歉”。Gate 要结合当前 surface / mode，区分普通自然语言、用户主动要求停止，以及已允许场景里突然冒出来的模板化 meta-refusal。
 
-如果 provider 明确返回平台级 blocked / refusal 结果，应尊重 provider 的结果，而不是把它伪装成普通 candidate 再绕过去。这个 case study 讨论的是：**当 host 已处在允许的产品语境里，如何防止一个异常生成的 meta-refusal 被错误提交为长期会话事实。**
+这个 case study 关注的是：**如何防止一个异常生成的 meta-refusal 被错误提交为长期会话事实。**
 
 ---
 
@@ -836,9 +814,7 @@ Host 负责决定候选是否获得 canonical status。
 
 ## Responsible use
 
-请读 [RESPONSIBLE_USE.md](./RESPONSIBLE_USE.md)。
-
-这个 pattern 用来控制**你自己的应用什么时候提交模型输出**，不是用来绕过第三方平台安全机制，也不应该把真实、已建立的紧急需求伪装成普通对话。
+见 [RESPONSIBLE_USE.md](./RESPONSIBLE_USE.md)。
 
 ## License
 

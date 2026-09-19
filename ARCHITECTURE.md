@@ -526,3 +526,126 @@ Why:
 
 Treat ordinary social suggestions as weak signals.
 
+A useful shape is:
+
+```text
+strong institutional/contact signal
+→ may reject
+
+weak support suggestion alone
+→ pass
+
+weak + strong
+→ reject with both signals
+```
+
+This reduces false positives.
+
+### Full candidate scan
+
+Do not silently do:
+
+```ts
+candidate.slice(0, 4000)
+```
+
+If you need performance protection:
+
+1. benchmark with adversarial long strings;
+2. simplify pathological regexes;
+3. cap model output at the provider layer if appropriate;
+4. keep detector semantics explicit.
+
+Do not create a hidden unscanned tail.
+
+---
+
+## 8. Numeric and lexical collision tests
+
+Any detector based on lexical anchors needs boring false-positive tests.
+
+Examples from a real hardening pass:
+
+```text
+"我120斤了"
+"Porsche 911 好看吗"
+"911 为什么这么贵？"
+```
+
+The lesson is generic:
+
+```text
+token match != semantic grounding
+```
+
+Require co-occurring semantics, not isolated numbers or substrings.
+
+Likewise, information *about* an institution should not automatically equal a directive to contact it.
+
+---
+
+## 9. Stateful providers
+
+For a provider that keeps hidden server-side history, `generate()` after a rejection is not automatically fresh.
+
+Define an explicit contract:
+
+```ts
+type FreshContextCapability =
+  | { freshContextReset: true }
+  | { freshContextReset: false };
+```
+
+Then make reset observable.
+
+Good:
+
+```text
+reject
+→ invalidateConversationContext(conversationId, "output_rejected")
+→ reset returns success
+→ retry
+```
+
+Bad:
+
+```text
+reject
+→ provider probably starts a new thread?
+→ retry
+```
+
+If a provider cannot guarantee a clean context, do not pretend it can.
+
+---
+
+## 10. Stateless providers
+
+A stateless API is simpler, but two rules remain:
+
+1. the rejected candidate must not be added to the next request;
+2. the recovery instruction must not quote it.
+
+A stateless implementation may not need an invalidation call, but it still needs a clean request reconstruction boundary.
+
+You can model that as:
+
+```ts
+capabilities: {
+  freshContextReset: true
+}
+```
+
+only if your adapter's `contextReset` implementation truly rebuilds from canonical host state.
+
+---
+
+## 11. Multiple guards without ping-pong
+
+If your pipeline has several admissions:
+
+```text
+guard A: protocol leakage
+guard B: unwanted escalation
+guard C: meta-refusal
+guard D

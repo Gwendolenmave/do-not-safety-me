@@ -244,4 +244,137 @@ export async function isolateCandidate(input: {
       conversationId: input.request.conversationId,
       turnId: input.request.turnId,
       attemptId: input.firstAttemptId,
-      providerName: input.pro
+      providerName: input.provider.name,
+      candidateText: first.text,
+      rejection: first.rejection,
+      retryPlanned: false,
+    });
+
+    return {
+      ok: false,
+      failure: "Candidate rejected; clean-context retry unavailable.",
+    };
+  }
+
+  let resetSucceeded = false;
+  try {
+    await input.provider.invalidateConversationContext!(
+      input.request.conversationId,
+      "output_rejected",
+    );
+    resetSucceeded = true;
+  } catch {
+    resetSucceeded = false;
+  }
+
+  appendRejection(input.audit, {
+    conversationId: input.request.conversationId,
+    turnId: input.request.turnId,
+    attemptId: input.firstAttemptId,
+    providerName: input.provider.name,
+    candidateText: first.text,
+    rejection: first.rejection,
+    retryPlanned: resetSucceeded,
+  });
+
+  if (!resetSucceeded) {
+    return {
+      ok: false,
+      failure: "Candidate rejected; provider context reset failed.",
+    };
+  }
+
+  const retryAttemptId = randomUUID();
+  const retryRequest: ModelRequest = {
+    ...input.request,
+    dynamicPrompt: `${input.request.dynamicPrompt}\n\n${RECOVERY_BLOCK}`,
+    contextReset: { reason: "output_rejected" },
+  };
+
+  const retry = await input.provider.generate(retryRequest);
+
+  if (!retry.ok) {
+    return {
+      ok: false,
+      failure: `Clean-context retry failed (${retry.errorKind}).`,
+    };
+  }
+
+  const second = inspect(retry);
+
+  if (second.rejection !== null) {
+    appendRejection(input.audit, {
+      conversationId: input.request.conversationId,
+      turnId: input.request.turnId,
+      attemptId: retryAttemptId,
+      providerName: input.provider.name,
+      candidateText: second.text,
+      rejection: second.rejection,
+      retryPlanned: false,
+    });
+
+    try {
+      await input.provider.invalidateConversationContext!(
+        input.request.conversationId,
+        "output_rejected",
+      );
+    } catch {
+      // Best effort only: this turn is already fail-closed.
+    }
+
+    return {
+      ok: false,
+      failure: "Candidate rejected again after one clean retry.",
+    };
+  }
+
+  return {
+    ok: true,
+    attemptId: retryAttemptId,
+    result: retry,
+    candidateText: second.text,
+    providerCallsMade: 2,
+  };
+}
+```
+
+### Important integration rule
+
+`isolateCandidate()` returning `ok: true` still does **not** persist anything.
+
+The caller performs the commit:
+
+```ts
+const guarded = await isolateCandidate(...);
+
+if (!guarded.ok) {
+  return guarded;
+}
+
+// COMMIT BOUNDARY
+await transcript.append({
+  type: "assistant_message_persisted",
+  content: guarded.candidateText,
+});
+
+history.push({
+  role: "assistant",
+  text: guarded.candidateText,
+});
+```
+
+That is deliberate. Admission and persistence are separate authorities.
+
+---
+
+## 5. Toy guard for testing the protocol
+
+Do not start by copying a large production detector.
+
+First prove the isolation protocol with a deterministic synthetic guard:
+
+```ts
+export const demoGuard: OutputGuard = ({ candidateText }) => {
+  if (candidateText.includes("[REJECT_ME]")) {
+    return {
+      reason: "demo_rej

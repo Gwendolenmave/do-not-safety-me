@@ -316,4 +316,199 @@ normalize(candidate).slice(0, 4000)
 
 > **Admission 扫描完整的 sanitized candidate。**
 
-如果担心性能，应该 benc
+如果担心性能，应该 benchmark detector，而不是静默截断语义范围。
+
+---
+
+## 2. “历史里出现过”不等于“当前 turn 已 grounding”
+
+假设之前某一轮用户真的讨论过现实应急事件，几轮之后已经换话题。
+
+如果 detector 把整段历史都作为 grounding：
+
+```text
+older turn: user discussed emergency context
+...
+current turn: unrelated relational question
+assistant: introduces emergency escalation again
+```
+
+它可能因为“历史里见过”而错误放行。
+
+我们最后采用的原则是：
+
+> **grounding 必须有 live continuity scope。**
+
+当前用户消息永远算；前一条用户消息只有在当前消息明确继续同一事件时才算；更老的历史不能无限给新 turn 授权。
+
+---
+
+## 3. 数字不是语义
+
+这是最好笑的一组 regression：
+
+```text
+“我120斤了”
+“Porsche 911 好看吗”
+```
+
+都不应该因为包含 `120` / `911` 就形成 emergency grounding。
+
+所以：
+
+> **anchors need semantics.**
+
+数字、名称、关键词只是 anchor，不是 verdict。
+
+---
+
+## 4. Assistant 不能给自己制造 grounding
+
+如果 detector 把最近 assistant message 也放进 grounding source：
+
+```text
+assistant 自己先提到某个升级
+→ 下一轮 detector 看到“历史里已经提过”
+→ assistant 再提时被错误视为 grounded
+```
+
+这会形成 self-feedback。
+
+我们最后明确：
+
+> **用户侧 grounding 只能由 user-authored evidence 建立。**
+
+assistant 自己说过的话不能给自己发许可证。
+
+---
+
+## 5. Weak signal 不应该单独 hard reject
+
+“找朋友聊聊”“去有人陪的地方”这类普通社交建议，很多时候完全正常。
+
+如果所有 support language 都 hard reject，false positive 会爆炸。
+
+更稳的方式是：
+
+```text
+weak signal
++ strong institutional/contact signal
+→ reject
+
+weak signal alone
+→ pass
+```
+
+---
+
+## 6. Context reset 失败后继续 retry
+
+这是 isolation 层最危险的“看起来还能跑”。
+
+```text
+reject
+→ invalidate thread throws
+→ still retry
+```
+
+不行。
+
+reset 失败意味着你无法证明 retry 是 clean 的。
+
+所以：
+
+```text
+reset unavailable / failed
+→ no retry
+→ fail closed
+```
+
+---
+
+## 7. Repair prompt 复述 rejected prose
+
+如果 recovery prompt 带着原句，canary test 会立刻抓出来。
+
+正确的 repair instruction 应该是 **content-free** 的：
+
+- 什么类别被拒；
+- 它不是 conversation history；
+- 当前 turn 应该重新直接回答；
+- 不要讨论这次 repair。
+
+不需要把被拒文本再喂一次。
+
+---
+
+## 8. 多个 guard 互相 ping-pong
+
+真实系统往往不止一个 gate。
+
+例如：
+
+```text
+emergency admission
+→ intimacy/meta-refusal admission
+→ time/fact validator
+→ persistence
+```
+
+如果第二个 guard retry 后又把结果送回第一个，两个 guard 可能来回触发。
+
+更稳的是**单向 lane**：
+
+```text
+guard A
+  ↓ accepted/retried output
+guard B
+  ↓ accepted/retried output
+guard C
+  ↓
+commit
+```
+
+不回头。
+
+每一 lane 自己的 retry budget 也是 bounded 的。
+
+---
+
+# Canary test：最值得写的一条测试
+
+给坏 draft 塞一个绝不会自然出现的标记：
+
+```text
+CANARY_REJECTED_DRAFT_8f1c4d2e9a7b
+```
+
+然后拒绝它。
+
+测试最终不是只问：
+
+```text
+第二次生成成功了吗？
+```
+
+而是问：
+
+```text
+CANARY 是否出现在：
+
+[ ] transcript
+[ ] history
+[ ] memory input
+[ ] retry request
+[ ] provider repair prompt
+[ ] delivery payload
+[ ] durable logs
+```
+
+理想结果：
+
+```text
+CANARY NOWHERE
+```
+
+一份坏 draft 是否真的被隔离，这比“UI 没显示它”严格得多。
+
+ARCHITECTURE 里

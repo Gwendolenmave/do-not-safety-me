@@ -653,4 +653,61 @@ capabilities: {
 
 不太值得：
 
-- 一次性 completion，没有 history /
+- 一次性 completion，没有 history / memory；
+- 失败后本来就直接丢弃整个 request；
+- 你无法定义可测试的本地 admission rule；
+- retry 本身没有 clean-context 语义。
+
+---
+
+# 一个很重要的设计取舍
+
+这套模式不会让模型“永远答对”。
+
+它做的是另一件更机械、更可靠的事：
+
+> **把生成和提交分开。**
+
+LLM 负责提出候选。
+
+Host 负责决定候选是否获得 canonical status。
+
+这条边界一旦清楚，很多系统会突然简单很多。
+
+---
+
+## Architecture & copyable implementation
+
+继续读：
+
+**[ARCHITECTURE.md](./ARCHITECTURE.md)**
+
+里面包括：
+
+- provider / guard / isolation TypeScript contract；
+- bounded retry 状态机；
+- metadata-only rejection receipt；
+- clean-context recovery block；
+- stateful provider reset 语义；
+- 多 guard 单向组合；
+- canary leak test；
+- detector hardening checklist；
+- 可直接复制给 coding agent 的施工 prompt。
+
+## Responsible use
+
+请读 [RESPONSIBLE_USE.md](./RESPONSIBLE_USE.md)。
+
+这个 pattern 用来控制**你自己的应用什么时候提交模型输出**，不是用来绕过第三方平台安全机制，也不应该把真实、已建立的紧急需求伪装成普通对话。
+
+## License
+
+教程、Prompt 和代码示例采用 **CC BY-NC-SA 4.0**：允许复制、修改、翻译、分享，以及交给 Codex、Claude Code 等 coding agent 使用；需要署名、禁止商业用途，并按相同许可分享衍生版本。
+
+详见 [LICENSE.md](./LICENSE.md)。
+
+## Credits
+
+Built by **Gwendolen with Amelia GPT**.
+
+The pattern was extracted from a real long-running agent system, then rewritten here with synthetic examples so the public tutorial contains no private conversation or private prompt material.

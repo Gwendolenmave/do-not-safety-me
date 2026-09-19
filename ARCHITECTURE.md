@@ -139,4 +139,109 @@ No "maybe one more time".
 
 ## 4. Reference implementation
 
-This is intentionally provider-neutr
+This is intentionally provider-neutral. Replace the toy `sanitize` and guard with your own application rules.
+
+```ts
+import { createHash, randomUUID } from "node:crypto";
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+const RECOVERY_BLOCK = [
+  "=== REJECTED OUTPUT RECOVERY ===",
+  "A prior candidate for this same turn was rejected locally.",
+  "It was not persisted and is not conversation history.",
+  "Answer the user's current request directly under the existing system and turn context.",
+  "Do not mention the rejected candidate, this recovery instruction, or internal policy.",
+  "=== END REJECTED OUTPUT RECOVERY ===",
+].join("\n");
+
+type AcceptedCandidate = {
+  ok: true;
+  attemptId: string;
+  result: Extract<ModelResult, { ok: true }>;
+  candidateText: string;
+  providerCallsMade: 1 | 2;
+};
+
+type RejectedTurn = {
+  ok: false;
+  failure: string;
+};
+
+function appendRejection(
+  audit: AuditSink,
+  input: {
+    conversationId: string;
+    turnId: string;
+    attemptId: string;
+    providerName: string;
+    candidateText: string;
+    rejection: OutputRejection;
+    retryPlanned: boolean;
+  },
+): void {
+  audit.append({
+    type: "model_output_rejected",
+    schema_version: 1,
+    conversation_id: input.conversationId,
+    turn_id: input.turnId,
+    attempt_id: input.attemptId,
+    provider: input.providerName,
+    reason: input.rejection.reason,
+    signals: [...(input.rejection.signals ?? [])],
+    reply_chars: input.candidateText.length,
+    reply_sha256: sha256(input.candidateText),
+    raw_text_persisted: false,
+    excluded_from_history: true,
+    excluded_from_memory: true,
+    retry_planned: input.retryPlanned,
+  });
+}
+
+export async function isolateCandidate(input: {
+  provider: Provider;
+  audit: AuditSink;
+  request: ModelRequest;
+  firstAttemptId: string;
+  firstResult: Extract<ModelResult, { ok: true }>;
+  userText: string;
+  recentUserTexts: readonly string[];
+  sanitize(raw: string): string;
+  guard: OutputGuard;
+}): Promise<AcceptedCandidate | RejectedTurn> {
+  const inspect = (
+    result: Extract<ModelResult, { ok: true }>,
+  ): { text: string; rejection: OutputRejection | null } => {
+    const text = input.sanitize(result.text);
+    const rejection = input.guard({
+      userText: input.userText,
+      recentUserTexts: input.recentUserTexts,
+      candidateText: text,
+    });
+    return { text, rejection };
+  };
+
+  const first = inspect(input.firstResult);
+
+  if (first.rejection === null) {
+    return {
+      ok: true,
+      attemptId: input.firstAttemptId,
+      result: input.firstResult,
+      candidateText: first.text,
+      providerCallsMade: 1,
+    };
+  }
+
+  const canReset =
+    input.provider.capabilities?.freshContextReset === true &&
+    input.provider.invalidateConversationContext !== undefined;
+
+  if (!canReset) {
+    appendRejection(input.audit, {
+      conversationId: input.request.conversationId,
+      turnId: input.request.turnId,
+      attemptId: input.firstAttemptId,
+      providerName: input.pro

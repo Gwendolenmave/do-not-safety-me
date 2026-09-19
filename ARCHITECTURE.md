@@ -864,4 +864,73 @@ Implement a pre-persistence LLM output admission lane in the existing chat/agent
 
 Goal:
 Model output is only a candidate until it passes host-side admission. A rejected
-candidate must not become transcript, history, memory, summary
+candidate must not become transcript, history, memory, summary, embedding,
+delivery, retry input, or durable raw logs.
+
+First inspect the real call chain and find the single canonical assistant
+persistence boundary. Do not create a second parallel transcript path.
+
+Required design:
+
+1. Separate pure detector policy from isolation/retry mechanics.
+2. Run sanitation before admission.
+3. Run admission before assistant persistence/history/memory/delivery.
+4. On rejection, record metadata only:
+   - reason/category
+   - optional categorical signals
+   - char count
+   - sha256
+   - raw_text_persisted=false
+   - excluded_from_history=true
+   - excluded_from_memory=true
+   - retry_planned=<truthful value>
+5. Never include rejected raw text in the repair prompt.
+6. For stateful providers, retry only after a confirmed fresh-context reset.
+7. If reset is unsupported or fails, fail closed without retry.
+8. Allow at most one clean retry per lane.
+9. If the second candidate rejects, do not make a third call.
+10. If multiple guards exist, compose them as one-way lanes; no retry ping-pong.
+11. Keep normal clean-candidate behavior unchanged.
+
+Testing:
+- clean candidate passes with zero extra calls
+- first reject + reset + second pass
+- first reject + second reject, no third call
+- reset unavailable, no retry
+- reset throws, no retry
+- canary rejected bytes absent from transcript/history/memory/retry/delivery
+- long-tail detector case beyond any former scan window
+- stale grounding does not authorize unrelated turns
+- harmless lexical/numeric collisions
+- genuine grounded case still passes
+- weak-only signal does not hard reject
+- multi-lane call budget stays bounded
+
+Use only synthetic fixtures in public tests.
+Do not copy private prompts or private conversation text into source, tests,
+issues, logs, or PR descriptions.
+
+Deliver:
+- exact changed files
+- persistence boundary before/after
+- provider reset contract
+- retry state machine
+- receipt schema
+- focused test results
+- full test/typecheck/build results
+- rollback path
+```
+
+---
+
+## 18. The principle to keep
+
+The implementation details can change.
+
+The invariant should not:
+
+```text
+A rejected model draft never becomes a fact merely because the model generated it.
+```
+
+Generation propo

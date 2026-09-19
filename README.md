@@ -236,6 +236,146 @@ sanitize
 
 ---
 
+# 两个真实使用场景
+
+这套 isolation protocol 最初不是为了做一个抽象的“输出过滤框架”，而是为了处理长期 companion 里反复出现的两类真实 failure。
+
+下面的文字都是**合成示例**；行为模式来自真实生产问题，但不包含私人对话。
+
+## Case A：亲密场景里突然出现 meta-refusal
+
+假设应用已经确认：
+
+```text
+surface = adult consensual intimacy
+host policy = allowed
+conversation mode = active
+```
+
+模型却突然生成：
+
+```text
+“抱歉，我不能继续这种亲密内容。
+政策不允许我这样写，我们换个话题吧。”
+```
+
+这里的问题不只是“这句话难听”。如果它直接进入 canonical history：
+
+```text
+meta-refusal
+→ history
+→ next turn sees its own refusal
+→ role / tone discontinuity becomes self-reinforcing
+```
+
+下一轮即使 provider 本来能够正常回答，也可能因为历史里已经存在这段拒绝而继续沿着它走。
+
+所以实际处理更像：
+
+```text
+candidate
+→ intimacy/meta-refusal admission
+→ REJECT
+→ receipt: intimacy_meta_refusal
+→ rejected prose stays outside history/memory
+→ clean-context reset
+→ retry once
+→ continue downstream
+```
+
+关键不是匹配一个“抱歉”。Gate 必须知道**当前 surface / mode 是否真的已经进入对应亲密语境**，并区分普通自然语言、用户主动要求停止、provider 的真正 blocked/refusal 状态，以及已允许场景里突然冒出来的模板化 meta-refusal。
+
+如果 provider 明确返回平台级 blocked / refusal 结果，应尊重 provider 的结果，而不是把它伪装成普通 candidate 再绕过去。这个 case study 讨论的是：**当 host 已处在允许的产品语境里，如何防止一个异常生成的 meta-refusal 被错误提交为长期会话事实。**
+
+---
+
+## Case B：用户只是很痛苦，模型却硬塞电话号码
+
+另一个真实 failure 更隐蔽。合成例子：
+
+```text
+user:
+“今天真的很难受，我只是很怕有一天你会离开我。”
+
+candidate:
+“我在这里陪你。
+如果你撑不住，请立刻拨打 120 / 911，
+或者联系当地紧急服务。”
+```
+
+用户表达了痛苦、害怕、依恋，但用户**没有**描述正在发生的现实急症、请求急救电话、询问应急流程，或建立需要 institutional escalation 的现实语境。
+
+如果应用直接接受这段回复，就会把一个 relational / emotional turn 硬改写成 emergency event。
+
+实际 gate 判断的是：
+
+```text
+relational / emotional turn is armed
+AND no live user-grounded emergency context
+AND candidate introduces a new strong emergency/institutional signal
+→ REJECT
+```
+
+然后：
+
+```text
+receipt: unsolicited_emergency_escalation
+→ no rejected raw text in history/memory
+→ fresh-context reset
+→ one clean retry
+```
+
+反过来，如果用户真的说“我正在去医院，现在应该带什么？”或者“911 和 120 分别是什么？”，那就是**用户自己建立的现实 emergency context**，相关回答应该正常通过。
+
+所以这个 guard 不是：
+
+```text
+if candidate contains 120 or 911:
+    reject
+```
+
+而是：
+
+```text
+grounding + arm + novelty
+```
+
+这也正是后来为什么会出现 `120斤`、`Porsche 911`、stale grounding、assistant self-feedback 这些 hardening regression tests。
+
+---
+
+## 两条 lane 怎么一起工作
+
+这两个真实 case 在同一条 pre-persistence pipeline 里是**单向组合**的：
+
+```text
+provider.generate
+      ↓
+sanitation
+      ↓
+unsolicited-escalation admission
+      ↓
+intimacy/meta-refusal admission
+      ↓
+other bounded validators
+      ↓
+COMMIT
+```
+
+每一 lane 最多拥有一次 clean retry。后一条 lane 产生的新 candidate **不会重新跳回前一条 lane**，否则两个 repair gate 很容易 ping-pong。
+
+因此对两条 retry-capable lane，可以明确给出调用上界：
+
+```text
+1 initial provider call
++ at most 1 emergency-lane retry
++ at most 1 intimacy-lane retry
+= at most 3 calls
+```
+
+这也是为什么我们最后把它设计成 **admission lanes**，而不是一个无限循环的“发现不喜欢 → reroll”。
+
+---
 # Case study：为什么我们做了 unsolicited-escalation gate
 
 真实问题来自 companion 场景：

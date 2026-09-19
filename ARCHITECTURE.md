@@ -377,4 +377,152 @@ First prove the isolation protocol with a deterministic synthetic guard:
 export const demoGuard: OutputGuard = ({ candidateText }) => {
   if (candidateText.includes("[REJECT_ME]")) {
     return {
-      reason: "demo_rej
+      reason: "demo_rejection",
+      signals: ["synthetic_marker"],
+    };
+  }
+  return null;
+};
+```
+
+This makes the most important integration tests trivial and repeatable.
+
+Once isolation works, add your real detector separately.
+
+---
+
+## 6. Canary leak test
+
+The highest-value test is not "did retry return a good answer?"
+
+It is "did rejected bytes leak anywhere?"
+
+```ts
+import assert from "node:assert/strict";
+import test from "node:test";
+
+const CANARY = "CANARY_REJECTED_DRAFT_8f1c4d2e9a7b";
+
+test("rejected draft never becomes system state", async () => {
+  const first = {
+    ok: true as const,
+    text: `bad [REJECT_ME] ${CANARY}`,
+  };
+
+  const second = {
+    ok: true as const,
+    text: "clean second candidate",
+  };
+
+  const transcript: unknown[] = [];
+  const requests: ModelRequest[] = [];
+
+  const provider: Provider = {
+    name: "fixture",
+    capabilities: { freshContextReset: true },
+    async invalidateConversationContext() {},
+    async generate(request) {
+      requests.push(request);
+      return second;
+    },
+  };
+
+  const audit: AuditSink = {
+    append(event) {
+      transcript.push(event);
+    },
+  };
+
+  const result = await isolateCandidate({
+    provider,
+    audit,
+    request: {
+      conversationId: "c1",
+      turnId: "t1",
+      systemPrompt: "system",
+      dynamicPrompt: "dynamic",
+    },
+    firstAttemptId: "a1",
+    firstResult: first,
+    userText: "hello",
+    recentUserTexts: [],
+    sanitize: (text) => text,
+    guard: demoGuard,
+  });
+
+  assert.equal(result.ok, true);
+
+  const transcriptBytes = JSON.stringify(transcript);
+  const retryBytes = JSON.stringify(requests);
+
+  assert.equal(transcriptBytes.includes(CANARY), false);
+  assert.equal(retryBytes.includes(CANARY), false);
+  assert.equal(requests.length, 1); // exactly one retry
+});
+```
+
+Then extend the scan to every surface your system owns:
+
+```text
+transcript
+history
+memory extraction queue
+summary input
+embedding input
+analytics payload
+retry request
+delivery payload
+crash recovery
+outbox / audit artifact
+```
+
+If the canary appears anywhere it should not, isolation is incomplete.
+
+---
+
+## 7. Detector architecture
+
+The isolation protocol is generic. The detector is product policy.
+
+For the unsolicited-escalation case study, a useful structure is:
+
+```text
+BYPASS / GROUNDING
+  user actually established the real-world context?
+        ↓ no
+ARM
+  is this a turn where accidental escalation matters?
+        ↓ yes
+NOVELTY
+  did the assistant introduce a strong new escalation category?
+        ↓ yes
+REJECT
+```
+
+### Grounding authority
+
+Prefer:
+
+```text
+current user-authored message
++
+at most one previous user-authored message
+only when current text clearly continues the same event
+```
+
+Avoid:
+
+```text
+entire mixed-role transcript
+```
+
+Why:
+
+- stale context should not authorize future unrelated turns;
+- assistant prose must not create its own grounding;
+- very old mentions should not suppress novelty.
+
+### Strong vs weak signals
+
+Treat ordinary social suggestions as weak signals.
+
